@@ -9,8 +9,8 @@
     "build": "tsc -b tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -b tsconfig.json",
-    "user:password": "tsx src/scripts/set-password.ts",
-    "user:create": "tsx src/scripts/create-user.ts",
+    "user:password": "npm --prefix ../.. run build:packages && tsx src/scripts/set-password.ts",
+    "user:create": "npm --prefix ../.. run build:packages && tsx src/scripts/create-user.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

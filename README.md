@@ -326,6 +326,23 @@ requests cannot use a wildcard.
 `EMAIL_FROM`. Until then `EMAIL_DRIVER=console` logs the message and the onboarding email
 is still recorded as delivered — which is how the wizard stays testable without a domain.
 
+**Creating the first admin on a deployed instance.** Migrations create tables, not
+users — a freshly deployed API has no accounts, so the login screen has nothing to
+authenticate against. Create one from your machine, pointing at the *same* database the
+deployed API uses:
+
+```bash
+# DATABASE_URL in your local .env must be the deployed Neon database
+npm run user:create -w @whitehouse/api -- \
+  --email you@yourmsp.example --name "Your Name" --role SUPER_ADMIN
+npm run user:password -w @whitehouse/api -- \
+  --email you@yourmsp.example --password 'a-long-password-here'
+```
+
+The account appears immediately in the deployed console (same database), and you can keep
+signing in from a laptop regardless of what the API is hosted on. `npm run db:status`
+prints which accounts exist and whether their password is set.
+
 **Scheduled jobs — GitHub Actions.** Add `API_BASE_URL` and `INTERNAL_CRON_SECRET` as
 repository secrets; `.github/workflows/scheduled-jobs.yml` runs daily at 06:15 UTC. The
 workflow retries the wake-up call first, because the free web service spins down.

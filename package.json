@@ -29,6 +29,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "npm run generate -w @whitehouse/db",
+    "db:status": "npm run build:packages && npm run status -w @whitehouse/db",
     "db:migrate": "npm run migrate -w @whitehouse/db",
     "db:deploy": "npm run migrate:deploy -w @whitehouse/db",
     "db:seed": "npm run seed -w @whitehouse/db"

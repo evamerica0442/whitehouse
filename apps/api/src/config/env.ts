@@ -34,6 +34,20 @@ const csv = z
       .filter(Boolean),
   );
 
+/**
+ * A blank value in a .env file means "not set".
+ *
+ * `.optional()` in zod only tolerates a *missing* key, so a copied `.env.example`
+ * with `INTERNAL_CRON_SECRET=` on its own line used to fail validation with
+ * "Too small: expected string to have >=16 characters" — which reads like a real
+ * misconfiguration but is just an empty placeholder. Every optional field goes
+ * through this.
+ */
+const blankToUndefined = (value: unknown): unknown =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value;
+
+const optionalEnvString = z.preprocess(blankToUndefined, z.string().optional());
+
 export const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -48,7 +62,7 @@ export const envSchema = z
     CORS_ORIGINS: csv,
 
     DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-    DATABASE_URL_UNPOOLED: z.string().optional(),
+    DATABASE_URL_UNPOOLED: optionalEnvString,
 
     SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
     SESSION_COOKIE_NAME: z.string().min(1).default('wh_session'),
@@ -65,26 +79,32 @@ export const envSchema = z
      * Secure. Local development over http:// needs Lax + insecure.
      */
     SESSION_COOKIE_SAME_SITE: z.enum(['lax', 'strict', 'none']).default('lax'),
-    SESSION_COOKIE_SECURE: z.string().optional(),
+    SESSION_COOKIE_SECURE: optionalEnvString,
 
     EMAIL_DRIVER: z.enum(['console', 'resend']).default('console'),
-    RESEND_API_KEY: z.string().optional(),
+    RESEND_API_KEY: optionalEnvString,
     EMAIL_FROM: z.string().default('Whitehouse Cloudguard <onboarding@resend.dev>'),
 
     CLOUD_PROVIDER: z.enum(CLOUD_PROVIDER_IDS).default('mock'),
     AWS_REGION: z.string().default(DEFAULT_AWS_REGION),
-    AWS_MANAGEMENT_ACCOUNT_ID: z
-      .string()
-      .regex(/^\d{12}$/, 'AWS_MANAGEMENT_ACCOUNT_ID must be 12 digits')
-      .optional(),
-    AWS_ACCESS_KEY_ID: z.string().optional(),
-    AWS_SECRET_ACCESS_KEY: z.string().optional(),
-    AWS_SESSION_TOKEN: z.string().optional(),
+    AWS_MANAGEMENT_ACCOUNT_ID: z.preprocess(
+      blankToUndefined,
+      z
+        .string()
+        .regex(/^\d{12}$/, 'AWS_MANAGEMENT_ACCOUNT_ID must be 12 digits')
+        .optional(),
+    ),
+    AWS_ACCESS_KEY_ID: optionalEnvString,
+    AWS_SECRET_ACCESS_KEY: optionalEnvString,
+    AWS_SESSION_TOKEN: optionalEnvString,
 
     JOB_DRIVER: z.enum(['pg-boss', 'memory']).default('pg-boss'),
     JOB_CONCURRENCY: z.coerce.number().int().min(1).max(10).default(2),
     /** Shared secret for the GitHub Actions scheduler hitting /internal/jobs/run. */
-    INTERNAL_CRON_SECRET: z.string().min(16).optional(),
+    INTERNAL_CRON_SECRET: z.preprocess(
+      blankToUndefined,
+      z.string().min(16).optional(),
+    ),
   })
   .superRefine((value, ctx) => {
     if (value.CLOUD_PROVIDER === 'aws' && !value.AWS_MANAGEMENT_ACCOUNT_ID) {

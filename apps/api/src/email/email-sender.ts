@@ -39,15 +39,19 @@ export class ConsoleEmailSender implements EmailSender {
   constructor(private readonly logger: { info: (obj: unknown, msg?: string) => void }) {}
 
   async send(message: EmailMessage): Promise<EmailSendResult> {
+    // The full plain-text body is logged, not a truncated preview. With
+    // EMAIL_DRIVER=console the log *is* the delivery mechanism: a magic-link URL or
+    // an onboarding handover must be copyable from it, and a preview cut the link
+    // off mid-token. This driver is opt-in and the operator is the intended
+    // recipient, so there is no third party to leak to.
     this.logger.info(
       {
         to: message.to,
         subject: message.subject,
         attachments: message.attachments?.map((attachment) => attachment.filename) ?? [],
-        // Truncated on purpose: the body can contain a customer's ExternalId.
-        preview: message.text.slice(0, 120),
+        body: message.text,
       },
-      'email suppressed (EMAIL_DRIVER=console)',
+      'email not sent (EMAIL_DRIVER=console) — full message body below',
     );
 
     return { ok: true, providerMessageId: `console-${Date.now()}`, error: null };
