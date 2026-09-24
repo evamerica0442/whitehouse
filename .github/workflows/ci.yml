@@ -28,6 +28,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Secret hygiene
+        # A real .env was once committed here and survived because git keeps tracking
+        # a file once added (gitignore does not untrack it). This step fails the build
+        # if an environment file or an inline connection string is ever committed.
+        run: |
+          set -euo pipefail
+
+          tracked_env="$(git ls-files | grep -E '^\.env$|^\.env\.' | grep -v '\.example$' || true)"
+          if [ -n "$tracked_env" ]; then
+            echo "::error::Environment file is tracked in git: ${tracked_env}"
+            exit 1
+          fi
+
+          leaks="$(git grep -lE 'postgres(ql)?://[^:/@[:space:]]+:[^@[:space:]]{6,}@' \
+            -- . ':!*.example' ':!*.md' || true)"
+          if [ -n "$leaks" ]; then
+            echo "::error::Possible inline database credentials in: ${leaks}"
+            exit 1
+          fi
+
+          echo "No tracked environment files or inline credentials."
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22

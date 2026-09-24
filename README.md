@@ -334,6 +334,7 @@ workflow retries the wake-up call first, because the free web service spins down
 
 | Symptom | Cause and fix |
 | --- | --- |
+| `.env` shows up as tracked in git / a secret was committed | `.gitignore` does **not** untrack an already-committed file. Run `git rm --cached .env` (the file stays on disk), then **rotate every credential it contained** — removing it from the tip does not remove it from history. CI now fails the build if an environment file or an inline connection string is ever committed. |
 | `TS2307: Cannot find module '../generated/prisma'`, often accompanied by `implicitly has an 'any' type` errors in `seed.ts` | The Prisma client has not been generated. It is gitignored build output under `packages/db/generated/prisma`. Run `npm run db:generate` (the `postinstall` hook normally does this; it skips on `--omit=dev` installs). |
 | `Missing script: "db:generate"` / workspace `@whitehouse/api` | The service is running from `apps/api`. `npm run` resolves scripts inside that workspace, and the build scripts live at the repository root. Set **Root Directory** to blank (repo root) or apply `render.yaml`. |
 | Build fails after adding `NODE_ENV=production` | `npm ci` then skips devDependencies, so `prisma`, `tsx` and `typescript` are missing. Use `npm ci --include=dev` in the build command. |
