@@ -93,6 +93,15 @@ npm run db:migrate            # creates tables from packages/db/prisma/schema.pr
 npm run db:seed               # 3 admin users, 7 guardrails, 2 SCPs, 2 templates, 3 tenants
 ```
 
+> **The Prisma client is build output, not a checked-in file.** It is written to
+> `packages/db/generated/prisma` (gitignored) and generated automatically by a
+> `postinstall` hook in `@whitehouse/db`, so a fresh clone is ready after
+> `npm install`. If you ever install with `--omit=dev` (no Prisma CLI), the hook
+> skips with a warning and you must run `npm run db:generate` before building.
+>
+> Every build entry point (`build:api`, `build:web`, `dev`, `typecheck`) runs
+> `db:generate` itself, which is why none of them can fail on a missing client.
+>
 > An initial migration is already committed
 > (`packages/db/prisma/migrations/20260924000000_init`), generated from the schema with
 > `prisma migrate diff`. If you have no local Postgres to run `migrate dev` against, apply
@@ -325,6 +334,7 @@ workflow retries the wake-up call first, because the free web service spins down
 
 | Symptom | Cause and fix |
 | --- | --- |
+| `TS2307: Cannot find module '../generated/prisma'`, often accompanied by `implicitly has an 'any' type` errors in `seed.ts` | The Prisma client has not been generated. It is gitignored build output under `packages/db/generated/prisma`. Run `npm run db:generate` (the `postinstall` hook normally does this; it skips on `--omit=dev` installs). |
 | `Missing script: "db:generate"` / workspace `@whitehouse/api` | The service is running from `apps/api`. `npm run` resolves scripts inside that workspace, and the build scripts live at the repository root. Set **Root Directory** to blank (repo root) or apply `render.yaml`. |
 | Build fails after adding `NODE_ENV=production` | `npm ci` then skips devDependencies, so `prisma`, `tsx` and `typescript` are missing. Use `npm ci --include=dev` in the build command. |
 | `/readyz` returns 503 with `backend error` / `error -> TypeError` | The API cannot reach Postgres. Check `DATABASE_URL` uses the pooler hostname and that the Neon compute is awake (free tier suspends after 5 minutes idle; `connect_timeout=15` covers the wake-up). |

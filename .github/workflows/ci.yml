@@ -34,9 +34,13 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        # --include=dev keeps the build toolchain (prisma, tsx, typescript) present
+        # even if NODE_ENV=production is ever set for the workflow.
+        run: npm ci --include=dev
 
       - name: Generate Prisma client
+        # packages/db generates the client from a postinstall too; this makes the
+        # dependency explicit so CI never depends on lifecycle-script behaviour.
         run: npm run db:generate
 
       - name: Lint
