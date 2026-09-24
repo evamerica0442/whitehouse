@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # CI never talks to AWS or Neon. The mock provider and a dummy database URL are
+  # enough to typecheck, lint, build, and run the unit suite.
+  CLOUD_PROVIDER: mock
+  JOB_DRIVER: memory
+  DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+  SESSION_SECRET: ci-only-secret-value-at-least-32-chars
+  AWS_MANAGEMENT_ACCOUNT_ID: '111122223333'
+
+jobs:
+  verify:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck (packages + API)
+        run: npx tsc -b --force
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Build API
+        run: npm run build -w @whitehouse/api
+
+      - name: Typecheck + build web
+        run: npm run build -w @whitehouse/web

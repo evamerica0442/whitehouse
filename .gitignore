@@ -1,0 +1,37 @@
+# dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# builds
+dist/
+build/
+out/
+*.tsbuildinfo
+.vite/
+
+# env / secrets — never commit real values
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+logs/
+
+# generated Prisma client (recreated by `prisma generate`)
+packages/db/generated/
+packages/db/prisma/migrations/dev.db*
+
+# editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# test output
+coverage/
+.nyc_output/

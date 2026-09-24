@@ -1,0 +1,25 @@
+{
+  "name": "@whitehouse/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared domain enums, zod contracts, and cloud-provider interfaces",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "dev": "tsc -b tsconfig.json --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  }
+}

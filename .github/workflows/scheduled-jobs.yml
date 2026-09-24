@@ -1,0 +1,62 @@
+name: Scheduled jobs
+
+# Render's free tier has no cron jobs and no background workers, so the daily jobs
+# are triggered from here. GitHub Actions schedules are free, and the endpoint is
+# protected by a shared secret rather than a session.
+#
+# Required repository secrets:
+#   API_BASE_URL      e.g. https://whitehouse-cloudguard-api.onrender.com
+#   INTERNAL_CRON_SECRET  must match the API's INTERNAL_CRON_SECRET
+
+on:
+  schedule:
+    # 06:15 UTC daily — after AWS's cost data settles for the previous day.
+    - cron: '15 6 * * *'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Why this run was triggered manually
+        required: false
+
+jobs:
+  run-daily:
+    name: Trigger daily cost + guardrail jobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check configuration
+        run: |
+          if [ -z "${{ secrets.API_BASE_URL }}" ]; then
+            echo "::error::API_BASE_URL secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.INTERNAL_CRON_SECRET }}" ]; then
+            echo "::error::INTERNAL_CRON_SECRET secret is not set"
+            exit 1
+          fi
+
+      - name: POST /api/v1/internal/jobs/run-daily
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          CRON_SECRET: ${{ secrets.INTERNAL_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+
+          # The API spins down on the free tier; give the first request room to wake it.
+          echo "Waking the API…"
+          for attempt in 1 2 3; do
+            if curl -fsS --max-time 90 "${API_BASE_URL}/healthz" > /dev/null; then
+              echo "API is awake (attempt ${attempt})"
+              break
+            fi
+            echo "Attempt ${attempt} failed; retrying in 20s"
+            sleep 20
+          done
+
+          echo "Queueing daily jobs…"
+          curl -fsS --max-time 60 \
+            -X POST "${API_BASE_URL}/api/v1/internal/jobs/run-daily" \
+            -H "x-cron-secret: ${CRON_SECRET}" \
+            -H "content-type: application/json" \
+            --data '{"source":"github-actions"}'

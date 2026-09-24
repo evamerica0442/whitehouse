@@ -1,0 +1,44 @@
+{
+  "name": "@whitehouse/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prisma schema, migrations, client factory, and seed data",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "prisma",
+    "prisma.config.ts"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "dev": "tsc -b tsconfig.json --watch",
+    "generate": "prisma generate",
+    "validate": "prisma validate",
+    "migrate": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "migrate:reset": "prisma migrate reset",
+    "studio": "prisma studio",
+    "seed": "tsx src/seed.ts",
+    "clean": "rm -rf dist generated"
+  },
+  "prisma": {
+    "schema": "prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/adapter-neon": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "@whitehouse/shared": "*"
+  },
+  "devDependencies": {
+    "dotenv": "^18.0.3",
+    "prisma": "7.10.0",
+    "tsx": "^4.23.15"
+  }
+}

@@ -1,0 +1,157 @@
+# Project: Whitehouse Cloudguard MSP Console
+(Working name — a unified multi-tenant AWS management platform for MSPs, 
+functionally similar to Microsoft Lighthouse but built for AWS)
+
+## Vision
+Build a single web application used exclusively by MSP admin staff (no 
+customer-facing portal) to manage AWS environments across many customer 
+accounts from one pane of glass. The platform consolidates multi-tenant 
+governance, provisioning, and standardization capabilities normally spread 
+across four separate AWS services/programs:
+
+1. Multi-tenant operational management (like AWS MSP Partner Program tooling)
+2. Automated account provisioning + guardrails (like AWS Control Tower)
+3. Consolidated billing, SCPs, delegated admin (like AWS Organizations)
+4. Standardized, pre-approved deployment templates (like AWS Service Catalog)
+
+## Users
+Internal MSP admin staff only. No customer logins, no customer self-service 
+portal. Role tiers within the admin staff:
+- Super Admin — full access, can manage other admin users, approve templates
+- Engineer — can onboard tenants, apply guardrails, deploy templates
+- Read-only — dashboards and reports only, no write actions
+
+## Tech Stack
+- Frontend: React + TypeScript + Vite, Tailwind CSS, shadcn/ui components
+- Backend: Node.js + TypeScript, Express or Fastify
+- AWS SDK: AWS SDK for JavaScript v3 (@aws-sdk/client-organizations, 
+  @aws-sdk/client-controltower, @aws-sdk/client-servicecatalog, 
+  @aws-sdk/client-cost-explorer, @aws-sdk/client-sts)
+- Auth: Simple email/password or magic-link auth for admin staff initially 
+  (e.g., Lucia Auth or Auth.js), with a clear upgrade path to AWS IAM 
+  Identity Center (SSO) once deployed to ECS
+- Database: PostgreSQL — use Prisma as ORM
+- Infra-as-code: none needed yet for the free-tier deploy; add AWS CDK or 
+  Terraform later when migrating to ECS
+
+## Deployment Strategy (phased)
+**Phase 1 (now) — Free-tier hosting:**
+- Frontend: Vercel
+- Backend: Render (free web service tier)
+- Database: Neon (serverless Postgres, free tier)
+- Transactional email: Resend (free tier) — used for automated onboarding 
+  delivery (see Module 0 below)
+- Use environment variables for all config so nothing is hardcoded to a 
+  specific host — critical for a clean migration later
+- No Docker required yet, but write the backend so it *can* be containerized 
+  without rework (avoid host-specific APIs, keep a standard `npm start` 
+  entrypoint)
+- Note: Render's free tier spins down after inactivity (~30s cold start on 
+  wake) — acceptable for an internal admin tool, flag this if it becomes 
+  an issue
+
+**Phase 2 (future) — AWS ECS:**
+- Containerize backend with Dockerfile (Fastify/Express app, multi-stage build)
+- Frontend served via S3 + CloudFront, or containerized alongside backend
+- Database migrates to RDS Postgres
+- Email migrates to Amazon SES
+- Swap admin auth to IAM Identity Center
+- CI/CD via GitHub Actions → ECR → ECS
+- Structure the repo now so this migration is a config/infra change, not a 
+  rewrite
+
+## Core Modules to Build
+
+### 0. Onboarding (new tenant setup flow) — build this first
+A guided, step-by-step wizard for admin staff to bring a new customer AWS 
+account under management:
+1. Capture customer details (name, contact email, environment type, region)
+2. Generate a CloudFormation template that creates the cross-account IAM 
+   role the MSP will assume
+3. Delivery step — admin chooses one of two options at this point in the 
+   wizard:
+   - **Manual**: display the template + copy-pasteable instructions on 
+     screen for the admin to send however they like
+   - **Automated**: send the template + instructions directly to the 
+     customer contact's email via Resend, with delivery status (sent/
+     failed) tracked against the tenant record
+   Both options should be available every time — this is a per-onboarding 
+   choice, not a global setting
+4. Verify the role: a "Test Connection" step that attempts STS AssumeRole 
+   and confirms access before marking onboarding complete
+5. Assign initial guardrails/SCPs and template catalog access as part of 
+   the same flow
+6. Mark tenant as "Active" and drop them into the main dashboard
+- Track onboarding status per tenant (Not Started / Template Sent / 
+  Awaiting Verification / Active) so partially-onboarded tenants are 
+  visible, not lost
+
+### 1. Tenant Management (Organizations layer)
+- List/search all managed tenant accounts with status, region, environment 
+  tags, onboarding state
+- Consolidated billing view: pull cost data per tenant via Cost Explorer 
+  API, aggregate into MSP-wide dashboard
+- Service Control Policy (SCP) builder/assigner — apply governance policies 
+  to individual accounts or groups
+- Delegated admin support so the MSP operates from its own management 
+  account rather than the customer's root
+
+### 2. Account Provisioning & Guardrails (Control Tower layer)
+- Guardrail library: pre-built compliance/security baselines (e.g., 
+  "block public S3," "require MFA," "enforce encryption at rest") toggled 
+  per tenant, applied during or after onboarding
+- Drift detection: periodically check tenant accounts against assigned 
+  guardrails and flag non-compliance
+- Centralized dashboard showing compliance status across all tenants 
+  (green/yellow/red health indicators)
+
+### 3. Template Catalog (Service Catalog layer)
+- Admins publish pre-approved CloudFormation/CDK templates (e.g., 
+  "standard VPC," "3-tier web app," "backup policy")
+- Deploy templates into a tenant's account directly from the console 
+  (admin-initiated, since there's no customer self-service)
+- Versioning and approval workflow for templates
+- Track which tenants have which templates deployed and at what version
+
+### 4. MSP Operations Dashboard (Partner Program layer)
+- Single-pane-of-glass view: account count, compliance %, monthly spend, 
+  open alerts, onboarding pipeline status
+- Automation hooks: scheduled jobs for patching reminders, cost anomaly 
+  alerts, guardrail re-checks
+- Audit log of every cross-account action taken through the platform, 
+  tied to the admin user who performed it
+
+## Architecture Notes
+- Every action against a customer account MUST go through STS AssumeRole 
+  using a scoped IAM role deployed in that account — never store long-lived 
+  customer credentials
+- Design the backend as a queue-driven job system (BullMQ works well and 
+  needs no AWS dependency, so it fits the free-tier phase) for any action 
+  touching a customer account, so provisioning/guardrail-apply operations 
+  are retryable
+- Multi-tenancy at the database level: every table scoped by `tenant_id`
+- Build a "CloudProvider" abstraction layer even though this MVP targets 
+  AWS only, to keep future flexibility
+
+## Deliverable Structure
+Monorepo:
+/apps/web        — React frontend
+/apps/api        — Node/Express backend
+/packages/aws-sdk-wrapper — shared cross-account AWS client helpers
+/packages/db     — Prisma schema + migrations
+/infra           — added in Phase 2 for ECS migration
+
+## First Milestone (start here)
+1. Scaffold the monorepo and base tooling (TypeScript configs, linting, 
+   Tailwind setup)
+2. Build admin auth (email/password to start) and a bare-bones dashboard 
+   shell
+3. Build the Onboarding wizard end-to-end, including the "Test Connection" 
+   STS AssumeRole verification step
+4. Build the Tenant Management list view with live Cost Explorer data for 
+   onboarded tenants
+5. Stub out Guardrails and Template Catalog modules with routing/pages but 
+   no logic yet
+
+Ask me clarifying questions before scaffolding if anything about the free 
+hosting provider choice, database provider, or auth library is ambiguous.

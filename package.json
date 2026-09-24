@@ -1,0 +1,43 @@
+{
+  "name": "whitehouse-cloudguard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Whitehouse Cloudguard — multi-tenant AWS management console for MSP admin staff",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build:packages && npm run build -w @whitehouse/api && npm run build -w @whitehouse/web",
+    "build:packages": "tsc -b packages/shared packages/db packages/aws-sdk-wrapper",
+    "clean": "tsc -b --clean && rm -rf apps/web/dist apps/api/dist",
+    "dev": "npm run build:packages && concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm run dev -w @whitehouse/api",
+    "dev:web": "npm run dev -w @whitehouse/web",
+    "typecheck": "tsc -b --force && npm run typecheck -w @whitehouse/web",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "npm run generate -w @whitehouse/db",
+    "db:migrate": "npm run migrate -w @whitehouse/db",
+    "db:deploy": "npm run migrate:deploy -w @whitehouse/db",
+    "db:seed": "npm run seed -w @whitehouse/db"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.2",
+    "concurrently": "^10.0.5",
+    "eslint": "^10.11.0",
+    "prettier": "^3.9.9",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.1",
+    "vitest": "^5.0.1"
+  }
+}

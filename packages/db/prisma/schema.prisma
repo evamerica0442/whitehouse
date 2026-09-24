@@ -1,0 +1,539 @@
+// Whitehouse Cloudguard — multi-tenant data model.
+//
+// Conventions enforced in review:
+//   * Every tenant-owned table carries `tenantId` and is indexed by it.
+//   * Cross-account actions never store customer credentials — only the
+//     account ID, role ARN, and per-tenant ExternalId used to assume the role.
+//   * The enum values below MUST stay in sync with packages/shared/src/enums.ts.
+//     That file is the source of truth for the API/web boundary; this file is
+//     the source of truth for the database.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// MSP admin staff + auth
+// ---------------------------------------------------------------------------
+
+enum Role {
+  SUPER_ADMIN
+  ENGINEER
+  READ_ONLY
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  name         String
+  role         Role      @default(ENGINEER)
+  // Null until a password is set; those users authenticate via magic link only.
+  passwordHash String?
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions     Session[]
+  magicLinks   MagicLink[]
+  auditLogs    AuditLog[]
+  createdTenants Tenant[] @relation("TenantCreatedBy")
+  approvedVersions TemplateVersion[] @relation("TemplateApprover")
+  deployments  TemplateDeployment[]
+
+  @@index([role])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  // SHA-256 of the opaque token that lives in the HTTP-only cookie. The raw
+  // token is never persisted, so a database leak cannot be replayed.
+  tokenHash String   @unique
+  userAgent String?
+  ipAddress String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model MagicLink {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  tokenHash String   @unique
+  expiresAt DateTime
+  consumedAt DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("magic_links")
+}
+
+// ---------------------------------------------------------------------------
+// Tenants (customer AWS accounts under management)
+// ---------------------------------------------------------------------------
+
+enum TenantStatus {
+  NOT_STARTED
+  TEMPLATE_SENT
+  AWAITING_VERIFICATION
+  ACTIVE
+}
+
+enum EnvironmentType {
+  PRODUCTION
+  STAGING
+  DEVELOPMENT
+  SANDBOX
+}
+
+enum DeliveryMethod {
+  MANUAL
+  AUTOMATED
+}
+
+enum DeliveryStatus {
+  NOT_SENT
+  PENDING
+  SENT
+  FAILED
+}
+
+enum HealthIndicator {
+  GREEN
+  YELLOW
+  RED
+}
+
+model Tenant {
+  id            String          @id @default(uuid()) @db.Uuid
+  slug          String          @unique
+  customerName  String
+  contactName   String?
+  contactEmail  String
+  environment   EnvironmentType @default(PRODUCTION)
+  region        String          @default("us-east-1")
+  status        TenantStatus    @default(NOT_STARTED)
+  health        HealthIndicator @default(RED)
+
+  // Cross-account access. Populated as the onboarding wizard progresses.
+  awsAccountId  String?
+  roleArn       String?
+  // Per-tenant confused-deputy token embedded in the generated CFN template.
+  externalId    String          @unique
+  organizationalUnitId String?
+
+  notes         String?
+  onboardedAt   DateTime?
+  lastVerifiedAt DateTime?
+  createdByUserId String?       @db.Uuid
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  createdByUser   User?          @relation("TenantCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  deliveries      OnboardingDelivery[]
+  guardrails      TenantGuardrail[]
+  scpAssignments  TenantScpAssignment[]
+  templateAccess  TenantTemplateAccess[]
+  costSnapshots   CostSnapshot[]
+  deployments     TemplateDeployment[]
+  jobRuns         JobRun[]
+  auditLogs       AuditLog[]
+
+  @@index([status])
+  @@index([environment])
+  @@index([region])
+  @@index([awsAccountId])
+  @@map("tenants")
+}
+
+/// Full history of onboarding template deliveries (manual vs automated email),
+/// so "sent/failed" status is tracked per attempt rather than as a mutable flag.
+model OnboardingDelivery {
+  id            String         @id @default(uuid()) @db.Uuid
+  tenantId      String         @db.Uuid
+  method        DeliveryMethod
+  status        DeliveryStatus @default(NOT_SENT)
+  recipient     String?
+  subject       String?
+  providerMessageId String?
+  error         String?
+  sentByUserId  String?        @db.Uuid
+  attemptedAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@map("onboarding_deliveries")
+}
+
+// ---------------------------------------------------------------------------
+// Module 2 — guardrail library + per-tenant assignments (Control Tower layer)
+// ---------------------------------------------------------------------------
+
+enum GuardrailCategory {
+  SECURITY
+  LOGGING
+  ENCRYPTION
+  NETWORK
+  COST
+  RESILIENCE
+}
+
+enum GuardrailSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum GuardrailEnforcement {
+  SCP
+  CONFIG_RULE
+  SERVICE_CONTROL
+  TAGGING
+}
+
+enum ComplianceState {
+  COMPLIANT
+  NON_COMPLIANT
+  UNKNOWN
+  NOT_APPLICABLE
+}
+
+/// MSP-global catalog of pre-built baselines ("block public S3", "require MFA").
+model Guardrail {
+  id          String              @id @default(uuid()) @db.Uuid
+  key         String              @unique
+  name        String
+  description String
+  category    GuardrailCategory
+  severity    GuardrailSeverity
+  enforcement GuardrailEnforcement
+  /// Control Tower managed control identifier when one exists.
+  controlTowerControlId String?
+  /// Mechanism payload, e.g. the SCP document or Config rule template.
+  definition  Json
+  isPrebuilt  Boolean             @default(true)
+  isActive    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  tenantAssignments TenantGuardrail[]
+
+  @@index([category])
+  @@map("guardrails")
+}
+
+model TenantGuardrail {
+  id          String          @id @default(uuid()) @db.Uuid
+  tenantId    String          @db.Uuid
+  guardrailId String          @db.Uuid
+  enabled     Boolean         @default(true)
+  state       ComplianceState @default(UNKNOWN)
+  detail      String?
+  lastCheckedAt DateTime?
+  assignedByUserId String?    @db.Uuid
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  guardrail Guardrail @relation(fields: [guardrailId], references: [id], onDelete: Cascade)
+  checks    GuardrailCheck[]
+
+  @@unique([tenantId, guardrailId])
+  @@index([tenantId, state])
+  @@map("tenant_guardrails")
+}
+
+/// Append-only history so drift detection can be charted over time.
+model GuardrailCheck {
+  id                String          @id @default(uuid()) @db.Uuid
+  tenantGuardrailId String          @db.Uuid
+  state             ComplianceState
+  detail            String?
+  evaluatedBy       String
+  createdAt         DateTime        @default(now())
+
+  tenantGuardrail TenantGuardrail @relation(fields: [tenantGuardrailId], references: [id], onDelete: Cascade)
+
+  @@index([tenantGuardrailId, createdAt])
+  @@map("guardrail_checks")
+}
+
+// ---------------------------------------------------------------------------
+// Module 1 — SCPs (Organizations layer)
+// ---------------------------------------------------------------------------
+
+model ScpPolicy {
+  id              String   @id @default(uuid()) @db.Uuid
+  name            String   @unique
+  description     String
+  /// The SCP JSON document.
+  document        Json
+  isPrebuilt      Boolean  @default(true)
+  createdByUserId String?  @db.Uuid
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  assignments TenantScpAssignment[]
+
+  @@map("scp_policies")
+}
+
+model TenantScpAssignment {
+  id               String   @id @default(uuid()) @db.Uuid
+  tenantId         String   @db.Uuid
+  scpPolicyId      String   @db.Uuid
+  targetType       String   @default("ACCOUNT")
+  attachedAt       DateTime @default(now())
+  attachedByUserId String?  @db.Uuid
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scpPolicy ScpPolicy @relation(fields: [scpPolicyId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, scpPolicyId])
+  @@map("tenant_scp_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// Module 3 — pre-approved template catalog (Service Catalog layer)
+// ---------------------------------------------------------------------------
+
+enum TemplateKind {
+  CLOUDFORMATION
+  CDK
+}
+
+enum TemplateStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  DEPRECATED
+}
+
+enum DeploymentStatus {
+  QUEUED
+  IN_PROGRESS
+  SUCCEEDED
+  FAILED
+  ROLLED_BACK
+}
+
+model CatalogTemplate {
+  id              String         @id @default(uuid()) @db.Uuid
+  key             String         @unique
+  name            String
+  description     String
+  kind            TemplateKind   @default(CLOUDFORMATION)
+  status          TemplateStatus @default(DRAFT)
+  createdByUserId String?        @db.Uuid
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  versions    TemplateVersion[]
+  deployments TemplateDeployment[]
+  tenantAccess TenantTemplateAccess[]
+
+  @@index([status])
+  @@map("catalog_templates")
+}
+
+/// Which pre-approved templates a tenant is entitled to deploy. Assigned during
+/// onboarding (and revisable later) so the deploy screen only offers sanctioned
+/// templates for that customer.
+model TenantTemplateAccess {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @db.Uuid
+  templateId      String   @db.Uuid
+  grantedByUserId String?  @db.Uuid
+  grantedAt       DateTime @default(now())
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  template CatalogTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, templateId])
+  @@index([tenantId])
+  @@map("tenant_template_access")
+}
+
+model TemplateVersion {
+  id               String         @id @default(uuid()) @db.Uuid
+  templateId       String         @db.Uuid
+  version          String
+  body             String
+  parametersSchema Json?
+  changelog        String?
+  status           TemplateStatus @default(DRAFT)
+  approvedByUserId String?        @db.Uuid
+  approvedAt       DateTime?
+  createdAt        DateTime       @default(now())
+
+  template       CatalogTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  approvedByUser User?           @relation("TemplateApprover", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  deployments    TemplateDeployment[]
+
+  @@unique([templateId, version])
+  @@index([status])
+  @@map("template_versions")
+}
+
+model TemplateDeployment {
+  id               String           @id @default(uuid()) @db.Uuid
+  tenantId         String           @db.Uuid
+  templateId       String           @db.Uuid
+  versionId        String           @db.Uuid
+  status           DeploymentStatus @default(QUEUED)
+  stackName        String
+  parameters       Json?
+  message          String?
+  deployedByUserId String?          @db.Uuid
+  deployedAt       DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  template       CatalogTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version        TemplateVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  deployedByUser User?           @relation(fields: [deployedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
+  @@map("template_deployments")
+}
+
+// ---------------------------------------------------------------------------
+// Module 4 — cost snapshots, job runs, audit trail
+// ---------------------------------------------------------------------------
+
+enum CostGranularity {
+  DAILY
+  MONTHLY
+}
+
+enum CostSource {
+  COST_EXPLORER
+  MOCK
+}
+
+/// The Cost Explorer API is billed per request, so the dashboard reads from
+/// this cache and a queue job refreshes it. Never call Cost Explorer inline.
+model CostSnapshot {
+  id          String          @id @default(uuid()) @db.Uuid
+  tenantId    String          @db.Uuid
+  periodStart DateTime        @db.Date
+  periodEnd   DateTime        @db.Date
+  granularity CostGranularity @default(MONTHLY)
+  currency    String          @default("USD")
+  total       Decimal         @db.Decimal(14, 2)
+  byService   Json
+  byDay       Json
+  source      CostSource      @default(MOCK)
+  fetchedAt   DateTime        @default(now())
+  createdAt   DateTime        @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, periodStart, periodEnd, granularity])
+  @@index([tenantId, fetchedAt])
+  @@map("cost_snapshots")
+}
+
+enum JobRunStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+/// Platform-side view of queued work, so admins can see retries and failures
+/// without shelling into the queue backend (pg-boss today, BullMQ or SQS later).
+model JobRun {
+  id              String       @id @default(uuid()) @db.Uuid
+  jobName         String
+  queueJobId      String?
+  tenantId        String?      @db.Uuid
+  status          JobRunStatus @default(QUEUED)
+  attempts        Int          @default(0)
+  maxAttempts     Int          @default(3)
+  payload         Json?
+  result          Json?
+  error           String?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdByUserId String?      @db.Uuid
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([status])
+  @@index([jobName, createdAt])
+  @@map("job_runs")
+}
+
+enum AuditAction {
+  USER_LOGIN
+  USER_LOGIN_FAILED
+  USER_LOGOUT
+  USER_INVITED
+  TENANT_CREATED
+  TENANT_UPDATED
+  ONBOARDING_TEMPLATE_GENERATED
+  ONBOARDING_TEMPLATE_DELIVERED
+  ONBOARDING_CONNECTION_VERIFIED
+  ONBOARDING_COMPLETED
+  GUARDRAILS_ASSIGNED
+  COST_SNAPSHOT_REFRESHED
+  TEMPLATE_PUBLISHED
+  TEMPLATE_DEPLOYED
+}
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+  DENIED
+}
+
+/// Append-only: every cross-account action, tied to the admin who performed it.
+model AuditLog {
+  id          String       @id @default(uuid()) @db.Uuid
+  actorUserId String?      @db.Uuid
+  actorEmail  String?
+  tenantId    String?      @db.Uuid
+  action      AuditAction
+  outcome     AuditOutcome @default(SUCCESS)
+  targetType  String?
+  targetId    String?
+  detail      Json?
+  ipAddress   String?
+  requestId   String?
+  createdAt   DateTime     @default(now())
+
+  actor  User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
+
+
+
