@@ -19,6 +19,7 @@
   "scripts": {
     "build": "tsc -b tsconfig.json",
     "dev": "tsc -b tsconfig.json --watch",
+    "postinstall": "node scripts/generate-client.mjs",
     "generate": "prisma generate",
     "validate": "prisma validate",
     "migrate": "prisma migrate dev",
