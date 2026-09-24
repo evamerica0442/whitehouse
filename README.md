@@ -274,15 +274,44 @@ environment: `DATABASE_URL` (pooled, has `-pooler` in the host) for the applicat
 `DATABASE_URL_UNPOOLED` (direct) for migrations. Run `npm run db:deploy` against the
 direct URL from CI or locally.
 
-**API — Render.** New Web Service from the repo, root directory `apps/api`, build
-`npm ci && npm run db:generate && npm run build`, start `npm start`, plan **Free**,
-health check path `/healthz`. Environment: everything from `.env.example`, plus
-`NODE_ENV=production`, `SESSION_COOKIE_SAME_SITE=none`, `SESSION_COOKIE_SECURE=true`, and
-`CORS_ORIGINS` set to the Vercel URL.
+**API — Render.** Create the service **from the repository root**: leave *Root
+Directory* **blank**. Setting it to `apps/api` is the mistake to avoid — `npm run`
+resolves scripts inside that workspace, and the build scripts live at the root.
 
-**Web — Vercel.** Import the repo, root directory `apps/web`, framework Vite. Set
-`VITE_API_BASE_URL` to the Render URL and deploy. The API's `CORS_ORIGINS` must match the
-Vercel origin exactly, since credentialed CORS requests are not wildcard-able.
+| Setting | Value |
+| --- | --- |
+| Root Directory | *(blank — repo root)* |
+| Build Command | `npm ci --include=dev && npm run build:api` |
+| Start Command | `npm run start:api` |
+| Health Check Path | `/healthz` |
+| Instance Type | Free |
+
+`--include=dev` matters: if you set `NODE_ENV=production` as a service environment
+variable, plain `npm ci` omits devDependencies and the build loses `prisma`, `tsx` and
+`typescript`. Runtime variables (`NODE_ENV=production`, `SESSION_COOKIE_SAME_SITE=none`,
+`SESSION_COOKIE_SECURE=true`, `CORS_ORIGINS`, DATABASE_URL, …) all come from
+`.env.example`.
+
+Apply the committed migration once, from your machine or a Render shell:
+
+```bash
+npm run db:deploy      # uses DATABASE_URL_UNPOOLED
+npm run db:seed
+```
+
+**Web — Vercel.** Also deploy from the repository root, because the web app imports
+`@whitehouse/shared`, which npm only links when the workspace root is installed.
+
+| Setting | Value |
+| --- | --- |
+| Root Directory | *(blank — repo root)* |
+| Framework Preset | Vite |
+| Build Command | `npm run build:web` |
+| Output Directory | `apps/web/dist` |
+| Environment | `VITE_API_BASE_URL=https://<your-api>.onrender.com` |
+
+The API's `CORS_ORIGINS` must then contain the Vercel origin exactly — credentialed CORS
+requests cannot use a wildcard.
 
 **Email — Resend.** Set `EMAIL_DRIVER=resend`, `RESEND_API_KEY`, and a verified
 `EMAIL_FROM`. Until then `EMAIL_DRIVER=console` logs the message and the onboarding email
@@ -291,6 +320,17 @@ is still recorded as delivered — which is how the wizard stays testable withou
 **Scheduled jobs — GitHub Actions.** Add `API_BASE_URL` and `INTERNAL_CRON_SECRET` as
 repository secrets; `.github/workflows/scheduled-jobs.yml` runs daily at 06:15 UTC. The
 workflow retries the wake-up call first, because the free web service spins down.
+
+### Troubleshooting deploys
+
+| Symptom | Cause and fix |
+| --- | --- |
+| `Missing script: "db:generate"` / workspace `@whitehouse/api` | The service is running from `apps/api`. `npm run` resolves scripts inside that workspace, and the build scripts live at the repository root. Set **Root Directory** to blank (repo root) or apply `render.yaml`. |
+| Build fails after adding `NODE_ENV=production` | `npm ci` then skips devDependencies, so `prisma`, `tsx` and `typescript` are missing. Use `npm ci --include=dev` in the build command. |
+| `/readyz` returns 503 with `backend error` / `error -> TypeError` | The API cannot reach Postgres. Check `DATABASE_URL` uses the pooler hostname and that the Neon compute is awake (free tier suspends after 5 minutes idle; `connect_timeout=15` covers the wake-up). |
+| Login appears to succeed but every request is 401 | The session cookie was dropped. Cross-site cookies need `SESSION_COOKIE_SAME_SITE=none` **and** `SESSION_COOKIE_SECURE=true`; the config loader refuses to boot on `none` without `Secure` for this reason. |
+| CORS error mentioning credentials | `CORS_ORIGINS` must list the exact web origin — credentialed requests cannot use `*`. |
+| Onboarding email never arrives | `EMAIL_DRIVER=console` (the default) logs instead of sending. Set `EMAIL_DRIVER=resend` plus `RESEND_API_KEY` and a verified `EMAIL_FROM`. Delivery status is recorded either way. |
 
 ### Phase 2 (ECS) — why this is a config change
 
@@ -307,6 +347,45 @@ containerizes unchanged. The seams that make the migration mechanical:
 | AWS creds | static keys in `.env` | ECS task role (already supported by `checkAwsCredentialAvailability`) |
 
 ---
+
+## Known advisories (reviewed, not reachable at runtime)
+
+`npm audit` reports **4 high** findings, all in Prisma 7's CLI toolchain. They are not
+fixed here on purpose — the fix requires forcing versions that Prisma exact-pins, and one
+of them is a **major** bump inside the config loader that `prisma migrate deploy` depends
+on and that cannot be regression-tested without a database.
+
+```
+prisma@7.10.0        → mysql2@3.15.3        (exact pin)
+  └ MySQL protocol client — this project only ever speaks Postgres
+@prisma/config@7.10.0 → deepmerge-ts@7.1.5  (exact pin, advisory <8.0.0)
+prisma, @prisma/config                       (inherited from the two above)
+```
+
+Why this is safe to defer, with evidence rather than assertion:
+
+- The vulnerable packages are **never loaded by the server**. Verified against the built
+  output: after `require('@whitehouse/db')`, `require.cache` contains
+  `@prisma/adapter-neon` but **no** `mysql2` and **no** `node_modules/prisma/`. The CLI
+  runs only during build (`prisma generate`) and migration.
+- `mysql2` is only reachable through Prisma's MySQL connector. Every connection this
+  project makes is Postgres via the Neon adapter.
+- The `deepmerge-ts` advisory is stack exhaustion when merging recursive object graphs.
+  It processes `packages/db/prisma.config.ts`, a file this repository authors.
+- `prisma` and `@prisma/config` appear only because their vulnerabilities are inherited
+  from those two packages.
+
+When Prisma ships patched pins, upgrade and re-run `npm audit --omit=dev` to confirm the
+count reaches zero. If you would rather clear the audit now, add
+
+```json
+"overrides": { "mysql2": "^3.24.4", "deepmerge-ts": "^8.0.2" }
+```
+
+to the root `package.json` **and delete `package-lock.json` before reinstalling** — npm
+will not re-resolve the exact-pinned entries otherwise (they show up as `invalid` while
+staying on the old version). Then re-test `prisma generate`, `prisma migrate diff`, and a
+real `migrate deploy` before trusting it.
 
 ## Deliberate scope limits in Milestone 1
 

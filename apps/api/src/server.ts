@@ -40,6 +40,15 @@ async function main(): Promise<void> {
   const prisma = getPrismaClient({
     connectionString: config.DATABASE_URL,
     logQueries: config.LOG_LEVEL === 'debug' || config.LOG_LEVEL === 'trace',
+    // Route Prisma's own messages through the structured logger instead of the
+    // `prisma:error undefined` line it prints to stdout when the connection fails.
+    onLog: (event) => {
+      if (event.level === 'error') {
+        logger.error({ prisma: true, target: event.target }, event.message);
+      } else {
+        logger.warn({ prisma: true, target: event.target }, event.message);
+      }
+    },
   });
 
   const cloud = createCloudProviderFromConfig(config, logger);

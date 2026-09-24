@@ -57,6 +57,90 @@ export class AppError extends Error {
   }
 }
 
+/**
+ * Extracts something useful from an unknown thrown value.
+ *
+ * This is not defensive padding — it is required. A failed Neon connection does not
+ * throw an `Error`: the serverless driver dispatches an **`ErrorEvent`** over its
+ * WebSocket, whose `message` is `""` and whose only enumerable property is
+ * `clientVersion`. Reporting that verbatim ("error object with keys: clientVersion")
+ * tells an operator nothing, so we walk the cause/error chain instead:
+ *
+ *     ErrorEvent → TypeError (no message)
+ */
+export function describeError(error: unknown): string {
+  const descriptors: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  for (let depth = 0; depth < 5 && current !== null && current !== undefined; depth += 1) {
+    if (seen.has(current)) break;
+    seen.add(current);
+
+    if (typeof current === 'string') {
+      descriptors.push(current);
+      break;
+    }
+
+    if (current instanceof Error) {
+      descriptors.push(current.message ? `${current.name}: ${current.message}` : `${current.name} (no message)`);
+      current = current.cause;
+      continue;
+    }
+
+    if (isEventLike(current)) {
+      descriptors.push(current.type || 'event');
+      current = current.error;
+      continue;
+    }
+
+    if (typeof current === 'object') {
+      const candidate = current as {
+        code?: unknown;
+        errno?: unknown;
+        message?: unknown;
+        cause?: unknown;
+        error?: unknown;
+        errors?: unknown;
+      };
+
+      const bits = [candidate.code, candidate.errno, candidate.message].filter(
+        (part): part is string | number => typeof part === 'string' || typeof part === 'number',
+      );
+
+      if (bits.length > 0) {
+        descriptors.push(bits.map(String).join(' '));
+        current = candidate.cause ?? candidate.error ?? firstOf(candidate.errors);
+        continue;
+      }
+
+      const keys = Object.keys(current);
+      descriptors.push(keys.length > 0 ? `object(${keys.join(', ')})` : 'empty object');
+      current = candidate.cause ?? candidate.error ?? firstOf(candidate.errors);
+      continue;
+    }
+
+    descriptors.push(String(current));
+    break;
+  }
+
+  return descriptors.length > 0 ? descriptors.join(' -> ') : 'unrecognised error (see server logs)';
+}
+
+function firstOf(value: unknown): unknown {
+  return Array.isArray(value) && value.length > 0 ? value[0] : undefined;
+}
+
+/** DOM/CustomEvent-shaped values (what the Neon driver throws) are not `Error`s. */
+function isEventLike(value: unknown): value is { type?: string; error?: unknown } {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as { type?: unknown; error?: unknown; defaultPrevented?: unknown };
+  return (
+    typeof candidate.type === 'string' &&
+    ('error' in candidate || typeof candidate.defaultPrevented === 'boolean')
+  );
+}
+
 /** Builds the single error envelope every route returns. */
 export function toErrorResponse(error: unknown): {
   statusCode: number;

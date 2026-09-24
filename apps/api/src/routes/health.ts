@@ -1,5 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 
+import { describeError } from '../lib/errors';
+
 /**
  * Liveness and readiness.
  *
@@ -19,16 +21,21 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
     timestamp: new Date().toISOString(),
   }));
 
-  app.get('/readyz', async (_request, reply) => {
-    const checks: Record<string, { ok: boolean; detail?: string }> = {};
+  app.get('/readyz', async (request, reply) => {
+    const checks: Record<string, { ok: boolean; detail?: string; hint?: string }> = {};
 
     try {
       await app.deps.prisma.$queryRaw`SELECT 1`;
       checks.database = { ok: true };
     } catch (error) {
+      // Log the raw value (the driver throws an ErrorEvent, not an Error) and return
+      // a readable chain plus a hint, so a failing deploy is diagnosable from the
+      // response alone and not only from the platform log stream.
+      request.log.error({ err: error }, 'readiness probe: database unreachable');
       checks.database = {
         ok: false,
-        detail: error instanceof Error ? error.message : 'unknown database error',
+        detail: describeError(error),
+        hint: 'Check DATABASE_URL, and that the Neon compute is awake — the free tier suspends idle computes after 5 minutes.',
       };
     }
 

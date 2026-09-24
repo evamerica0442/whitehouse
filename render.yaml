@@ -1,0 +1,63 @@
+# Optional Render Blueprint for the API service.
+#
+# This file is only used if you create a Blueprint from this repository. If you
+# configure the service by hand instead, use the same values from the README's
+# deployment table — the important one being that the service must run from the
+# repository root, not from apps/api, because the build scripts live at the root.
+#
+# Secrets are marked `sync: false` so Render prompts for them instead of storing
+# them here.
+
+services:
+  - type: web
+    name: whitehouse-cloudguard-api
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: .
+    buildCommand: npm ci --include=dev && npm run build:api
+    startCommand: npm run start:api
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      # --include=dev in the build command keeps the build working even though
+      # NODE_ENV=production is set here.
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 22.12.0
+
+      # The web app and API live on different hosts, so the session cookie is
+      # cross-site: SameSite=None requires Secure, or browsers drop it silently.
+      - key: SESSION_COOKIE_SAME_SITE
+        value: none
+      - key: SESSION_COOKIE_SECURE
+        value: 'true'
+
+      # Start on the mock provider so the first deploy works without AWS keys.
+      # Switch to `aws` once AWS_MANAGEMENT_ACCOUNT_ID is set.
+      - key: CLOUD_PROVIDER
+        value: mock
+      - key: JOB_DRIVER
+        value: pg-boss
+      - key: EMAIL_DRIVER
+        value: console
+      - key: LOG_LEVEL
+        value: info
+
+      - key: SESSION_SECRET
+        generateValue: true
+
+      # Prompted for in the Render dashboard (never stored in this file):
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_UNPOOLED
+        sync: false
+      - key: AWS_MANAGEMENT_ACCOUNT_ID
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: INTERNAL_CRON_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
