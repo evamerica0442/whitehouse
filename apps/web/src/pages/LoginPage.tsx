@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Field, Input } from '@/components/ui/field';
+import { getApiOrigin, isApiConfigured } from '@/lib/api-client';
 
 /**
  * Admin sign-in.
@@ -144,6 +145,13 @@ export function LoginPage() {
             Accounts are created by a super admin. If you do not have one yet, run the
             <code className="mx-1 rounded bg-muted px-1 py-0.5">user:create</code>
             script on the API.
+          </p>
+
+          {/* Which API this page talks to is the first thing to check when sign-in
+              fails, so it is visible instead of buried in the network tab. */}
+          <p className="border-t border-border pt-3 text-center text-xs text-muted-foreground">
+            API endpoint: <code className="text-foreground">{getApiOrigin()}</code>
+            {isApiConfigured() ? null : <span> (same origin — proxied to the API in dev)</span>}
           </p>
         </CardContent>
       </Card>
