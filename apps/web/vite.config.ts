@@ -32,9 +32,27 @@ export default defineConfig(({ mode, command }) => {
     );
   }
 
+  /**
+   * The shared root .env sets NODE_ENV=development for the API, and `envDir` makes it
+   * visible to Vite — which then defines `process.env.NODE_ENV` for the *client* too.
+   * React reads that constant to pick its build, so production output ended up
+   * bundling React's development build (+260 kB and dev-only warnings). Bind it to the
+   * build command instead, still honouring a genuine NODE_ENV from the host.
+   */
+  const hostNodeEnv = process.env.NODE_ENV;
+  const clientNodeEnv =
+    hostNodeEnv === 'production' || hostNodeEnv === 'development'
+      ? hostNodeEnv
+      : command === 'build'
+        ? 'production'
+        : 'development';
+
   return {
     plugins: [react(), tailwindcss()],
     envDir: repoRoot,
+    define: {
+      'process.env.NODE_ENV': JSON.stringify(clientNodeEnv),
+    },
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),

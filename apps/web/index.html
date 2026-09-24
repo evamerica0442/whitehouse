@@ -11,7 +11,72 @@
     />
   </head>
   <body>
-    <div id="root"></div>
+    <!--
+      The fallback below is replaced the moment React mounts. If it is still visible,
+      the bundle failed to start — and a blank page is the worst possible way to learn
+      that, so the inline script turns boot failures into something readable instead.
+    -->
+    <div id="root">
+      <noscript>
+        <div style="padding: 24px; font-family: system-ui, sans-serif; color: #e5e7eb">
+          This console requires JavaScript.
+        </div>
+      </noscript>
+      <div
+        id="boot-status"
+        style="
+          padding: 24px;
+          font-family: system-ui, sans-serif;
+          font-size: 14px;
+          color: #e5e7eb;
+          background: #252525;
+          min-height: 100vh;
+        "
+      >
+        Starting Whitehouse Cloudguard…
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var status = document.getElementById('boot-status');
+
+        function show(title, detail) {
+          // React removes #boot-status when it mounts, so this only renders when the
+          // app genuinely failed to start.
+          if (!status || !status.isConnected) return;
+          status.innerHTML =
+            '<h1 style="font-size:16px;margin:0 0 10px">' +
+            title +
+            '</h1><pre style="white-space:pre-wrap;font-size:12px;margin:0;opacity:.85">' +
+            String(detail).replace(/[<>&]/g, '') +
+            '</pre><p style="font-size:12px;opacity:.7;margin-top:14px">' +
+            'Full details are in the browser console (DevTools → Console). If this persists, stop the dev server, ' +
+            'delete node_modules/.vite, and run npm run dev again.</p>';
+        }
+
+        window.addEventListener('error', function (event) {
+          show('The app failed to start', event.message || event.error || event);
+        });
+
+        window.addEventListener('unhandledrejection', function (event) {
+          var reason = event.reason;
+          show(
+            'The app hit an unhandled error',
+            (reason && (reason.stack || reason.message)) || reason,
+          );
+        });
+
+        window.setTimeout(function () {
+          show(
+            'The app did not finish loading',
+            'The bundle had not mounted after 10 seconds. This is usually a module that failed to load, ' +
+              'or a stale Vite cache (node_modules/.vite) left over from a config change.',
+          );
+        }, 10000);
+      })();
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
