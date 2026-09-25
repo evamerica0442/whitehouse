@@ -55,6 +55,20 @@ export default defineConfig(({ mode, command }) => {
     },
     resolve: {
       alias: {
+        /**
+         * Consume the workspace package's TypeScript source, not its CommonJS build.
+         *
+         * Vite deliberately does not pre-bundle linked workspace packages, so it served
+         * `packages/shared/dist/index.js` (CJS, `exports.`/`require(`) straight to the
+         * browser, which parses modules as ESM and failed with:
+         *   "does not provide an export named 'apiErrorSchema'"
+         * Aliasing to source gives the browser real ESM in dev and in the build, and
+         * removes a whole class of CJS-interop guesswork from the bundle. The built
+         * dist is still what the Node API imports.
+         */
+        '@whitehouse/shared': fileURLToPath(
+          new URL('../../packages/shared/src/index.ts', import.meta.url),
+        ),
         '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
     },

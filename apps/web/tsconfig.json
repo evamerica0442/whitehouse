@@ -16,7 +16,8 @@
     "moduleDetection": "force",
     "verbatimModuleSyntax": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@whitehouse/shared": ["../../packages/shared/src/index.ts"]
     }
   },
   "include": ["src", "vite.config.ts"],
