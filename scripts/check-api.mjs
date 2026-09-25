@@ -70,7 +70,30 @@ if (healthResponse) {
   console.log(`✓ /healthz responded ${healthResponse.status} in ${Date.now() - startedAt} ms`);
   console.log(`  ${body.slice(0, 160)}`);
 
-  // ---- 2. CORS -------------------------------------------------------------
+  // ---- 2. Database readiness ----------------------------------------------
+  // /readyz is the only endpoint that reports whether the API can reach Postgres.
+  // A database that is unreachable makes every data route (login included) fail.
+  try {
+    const readyResponse = await fetch(`${target}/readyz`, { signal: AbortSignal.timeout(30_000) });
+    const readyBody = (await readyResponse.text()).slice(0, 400);
+    if (readyResponse.status === 200) {
+      console.log('✓ /readyz reports the database is reachable');
+    } else {
+      failures += 1;
+      console.log(`✗ /readyz reports the database is NOT reachable (${readyResponse.status})`);
+      console.log(`  ${readyBody}`);
+      console.log('');
+      console.log('  Sign-in and every other data route will fail with a generic 500 until this');
+      console.log('  is fixed. Check the database host: is the project still there, is the compute');
+      console.log('  suspended (Neon free tier suspends when CU-hours run out), and does the');
+      console.log('  password match the one in the API host\'s environment?');
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    console.log(`✗ /readyz probe failed: ${error.name}`);
+  }
+
+  // ---- 3. CORS -------------------------------------------------------------
   const corsResponse = await fetch(`${target}/api/v1/auth/me`, {
     headers: { origin: webOrigin },
     signal: AbortSignal.timeout(20_000),

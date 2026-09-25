@@ -41,6 +41,12 @@ export const apiErrorSchema = z.object({
     code: z.string(),
     message: z.string(),
     details: z.unknown().optional(),
+    /**
+     * Correlates the response with the server log line for it. A 500 deliberately
+     * says nothing useful to the client, so without this an operator has no way to
+     * find the matching entry in the host's log stream.
+     */
+    requestId: z.string().optional(),
   }),
 });
 

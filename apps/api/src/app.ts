@@ -74,6 +74,7 @@ export async function buildApp(
             path: issue.path.join('.'),
             message: issue.message,
           })),
+          requestId: request.id,
         },
       });
     }
@@ -81,12 +82,16 @@ export async function buildApp(
     const mapped = toErrorResponse(error);
 
     if (mapped.statusCode >= 500) {
+      // The response says nothing useful on purpose, so the request id is the only
+      // way to find this entry in the host's log stream.
       request.log.error({ err: error }, 'unhandled request error');
     } else if (mapped.statusCode === 429) {
       reply.header('retry-after', '60');
     }
 
-    return reply.code(mapped.statusCode).send(mapped.body);
+    return reply.code(mapped.statusCode).send({
+      error: { ...mapped.body.error, requestId: request.id },
+    });
   });
 
   app.setNotFoundHandler((request, reply) =>
