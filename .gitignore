@@ -35,3 +35,6 @@ Thumbs.db
 # test output
 coverage/
 .nyc_output/
+
+# stray scratch files (a Windows editor drops this next to the project)
+New Text Document.txt
